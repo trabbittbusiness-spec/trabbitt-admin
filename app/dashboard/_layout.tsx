@@ -1,7 +1,7 @@
-import React, { useState, createContext } from 'react';
+import React, { useState, createContext, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
-  Platform
+  Platform, Animated
 } from 'react-native';
 import { Stack, useRouter, usePathname } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,8 +9,11 @@ import {
   LayoutDashboard, Users, Building2, CalendarCheck,
   DollarSign, ShieldCheck, UserCheck, Briefcase,
   Image as ImageIcon, BarChart3, Headphones,
-  Settings, Bell, Search, Menu, Command, Sparkles
+  Settings, Bell, Search, Menu, Command, Sparkles,
+  Home, Star, Check, X, ArrowRight
 } from 'lucide-react-native';
+import { db } from '../../src/lib/firebase';
+import { collection, query, where, onSnapshot, orderBy, updateDoc, doc } from 'firebase/firestore';
 
 // ─── Theme: Startup Unicorn (Vibrant Mint + Solid Core) 
 const T = {
@@ -161,8 +164,14 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-// ─── Pro-Grade Solid TopBar ───────────────────────
-function TopBar({ onMenuPress, title }: { onMenuPress: () => void; title: string }) {
+// ─── Pro-Grade TopBar with Live Notifications ───────
+function TopBar({ onMenuPress, title, notifications, onBellPress }: { 
+  onMenuPress: () => void; 
+  title: string;
+  notifications: any[];
+  onBellPress: () => void;
+}) {
+  const unread = notifications.filter(n => !n.read).length;
   return (
     <View style={{ zIndex: 10 }}>
       <View style={{
@@ -170,7 +179,6 @@ function TopBar({ onMenuPress, title }: { onMenuPress: () => void; title: string
         backgroundColor: T.surface, paddingHorizontal: 32,
         shadowColor: T.brandDark, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 25, elevation: 8,
       }}>
-        
         {/* Burger & Title */}
         <View style={{ flexDirection: 'row', alignItems: 'center', width: 280 }}>
           <TouchableOpacity onPress={onMenuPress} style={{ marginRight: 20, padding: 8, backgroundColor: '#F1F5F9', borderRadius: 8 }}>
@@ -179,7 +187,7 @@ function TopBar({ onMenuPress, title }: { onMenuPress: () => void; title: string
           <Text style={{ color: T.brandDark, fontWeight: '900', fontSize: 22, letterSpacing: -0.5 }}>{title}</Text>
         </View>
         
-        {/* Command Palette Search Box (Startup staple) */}
+        {/* Search */}
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity style={{
             flexDirection: 'row', alignItems: 'center',
@@ -190,7 +198,6 @@ function TopBar({ onMenuPress, title }: { onMenuPress: () => void; title: string
           }}>
             <Search size={16} color={T.brandGray} strokeWidth={2.5} />
             <Text style={{ color: '#94A3B8', fontSize: 14, marginLeft: 12, fontWeight: '600' }}>Buscar inquilinos, reservas...</Text>
-            
             <View style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: '#E2E8F0' }}>
               <Command size={10} color="#94A3B8" strokeWidth={3} />
               <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '800', marginLeft: 4 }}>K</Text>
@@ -198,21 +205,32 @@ function TopBar({ onMenuPress, title }: { onMenuPress: () => void; title: string
           </TouchableOpacity>
         </View>
 
-        {/* Action Center */}
+        {/* Bell with Badge */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity style={{
-            width: 44, height: 44, borderRadius: 12, backgroundColor: '#FFFFFF',
-            borderWidth: 1, borderColor: T.border,
-            alignItems: 'center', justifyContent: 'center', position: 'relative'
-          }}>
-            <Bell size={20} color={T.brandDark} strokeWidth={2} />
-            <View style={{ position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: 4, backgroundColor: T.gradStart }} />
+          <TouchableOpacity 
+            onPress={onBellPress}
+            style={{
+              width: 44, height: 44, borderRadius: 12, backgroundColor: unread > 0 ? '#FEF3C7' : '#FFFFFF',
+              borderWidth: 1, borderColor: unread > 0 ? '#FDE68A' : T.border,
+              alignItems: 'center', justifyContent: 'center', position: 'relative'
+            }}
+          >
+            <Bell size={20} color={unread > 0 ? '#D97706' : T.brandDark} strokeWidth={2} />
+            {unread > 0 && (
+              <View style={{ 
+                position: 'absolute', top: -4, right: -4, 
+                minWidth: 18, height: 18, borderRadius: 9, 
+                backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center',
+                borderWidth: 2, borderColor: '#FFFFFF', paddingHorizontal: 3
+              }}>
+                <Text style={{ color: 'white', fontSize: 10, fontWeight: '900' }}>{unread > 9 ? '9+' : unread}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
-
       </View>
 
-      {/* The Magical Gradient Bottom Border of the Topbar */}
+      {/* Gradient border */}
       <LinearGradient 
         colors={[T.gradStart, T.gradEnd, '#3B82F6', T.border]} 
         start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} 
@@ -222,14 +240,167 @@ function TopBar({ onMenuPress, title }: { onMenuPress: () => void; title: string
   );
 }
 
+// ─── Notification Panel ───────────────────────────────
+function NotificationPanel({ notifications, onClose, onMarkRead }: {
+  notifications: any[];
+  onClose: () => void;
+  onMarkRead: (id: string) => void;
+}) {
+  const router = useRouter();
+
+  const handlePress = (notif: any) => {
+    onMarkRead(notif.id);
+    if (notif.type === 'new_ticket') {
+      router.push('/dashboard/support' as any);
+    } else if (notif.type === 'withdrawal_request') {
+      router.push('/dashboard/finances' as any);
+    } else if (notif.listingId) {
+      router.push(`/dashboard/properties/${notif.listingId}` as any);
+    }
+    onClose();
+  };
+
+  const timeAgo = (ts: any) => {
+    if (!ts?.toDate) return 'Ahora';
+    const diff = Date.now() - ts.toDate().getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Ahora mismo';
+    if (mins < 60) return `Hace ${mins} min`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `Hace ${hrs}h`;
+    return ts.toDate().toLocaleDateString();
+  };
+
+  return (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, flexDirection: 'row' }}>
+      {/* Backdrop */}
+      <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.3)' }} onPress={onClose} />
+      
+      {/* Panel */}
+      <View style={{ width: 400, backgroundColor: '#FFFFFF', height: '100%', shadowColor: '#000', shadowOffset: {width: -8, height: 0}, shadowOpacity: 0.1, shadowRadius: 24 }}>
+        {/* Header */}
+        <View style={{ paddingHorizontal: 28, paddingTop: 32, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A' }}>Notificaciones</Text>
+              <Text style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>
+                {notifications.filter(n => !n.read).length} sin leer
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+              <X size={18} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* List */}
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+          {notifications.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingTop: 60 }}>
+              <Bell size={48} color="#E2E8F0" />
+              <Text style={{ color: '#94A3B8', marginTop: 16, fontSize: 15, fontWeight: '600' }}>Sin notificaciones</Text>
+            </View>
+          ) : (
+            notifications.map((notif) => (
+              <TouchableOpacity
+                key={notif.id}
+                onPress={() => handlePress(notif)}
+                style={{
+                  backgroundColor: notif.read ? '#FAFAFA' : '#F0FDF4',
+                  borderRadius: 16, padding: 18,
+                  borderWidth: 1, borderColor: notif.read ? '#F1F5F9' : '#BBF7D0',
+                  flexDirection: 'row', alignItems: 'flex-start', gap: 14
+                }}
+              >
+                {/* Icon */}
+                <View style={{ 
+                  width: 44, height: 44, borderRadius: 12, 
+                  backgroundColor: notif.type === 'new_ticket' ? '#FFF7ED' : 
+                                  notif.type === 'withdrawal_request' ? '#ECFDF5' :
+                                  notif.listingType === 'Experiencia' ? '#FEF3C7' : '#EFF6FF', 
+                  alignItems: 'center', justifyContent: 'center', flexShrink: 0 
+                }}>
+                  {notif.type === 'new_ticket'
+                    ? <Headphones size={20} color="#EA580C" />
+                    : notif.type === 'withdrawal_request'
+                      ? <DollarSign size={20} color="#10B981" />
+                      : notif.listingType === 'Experiencia' 
+                        ? <Star size={20} color="#D97706" />
+                        : <Home size={20} color="#3B82F6" />
+                  }
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <View style={{ 
+                      backgroundColor: notif.type === 'withdrawal_request' ? '#DCFCE7' :
+                                      notif.listingType === 'Experiencia' ? '#FEF3C7' : '#DBEAFE',
+                      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginBottom: 6
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: notif.type === 'withdrawal_request' ? '#166534' : notif.listingType === 'Experiencia' ? '#D97706' : '#3B82F6' }}>
+                        {notif.type === 'withdrawal_request' ? 'FINANZAS' : notif.listingType?.toUpperCase()}
+                      </Text>
+                    </View>
+                    {!notif.read && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10B981' }} />}
+                  </View>
+
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 4 }} numberOfLines={2}>
+                    {notif.message}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>
+                    Por {notif.ownerName} · {timeAgo(notif.createdAt)}
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+                    <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '800' }}>
+                      {notif.type === 'withdrawal_request' ? 'Ver solicitud' : 'Ver anuncio'}
+                    </Text>
+                    <ArrowRight size={12} color="#10B981" />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
 // ─── Layout Shell ───────────────────────────────────
 export default function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
   const pathname = usePathname();
+
+  // Listener en tiempo real de notificaciones
+  useEffect(() => {
+    const q = query(
+      collection(db, 'notifications'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
+
+  const handleMarkRead = async (notifId: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', notifId), { read: true });
+    } catch (e) { console.error(e); }
+  };
 
   const activeNav = NAV.find(n => pathname === n.href || (n.href !== '/dashboard' && pathname.startsWith(n.href)));
   const title = activeNav?.label ?? 'Dashboard';
   const isWide = Platform.OS === 'web';
+
+  // Ocultar TopBar en pantallas de detalle
+  const isPropertyDetail = pathname.startsWith('/dashboard/properties/') && pathname !== '/dashboard/properties';
+  const isServiceDetail = pathname.startsWith('/dashboard/services/') && pathname !== '/dashboard/services';
+  const isBookingDetail = pathname.startsWith('/dashboard/bookings/') && pathname !== '/dashboard/bookings';
+  const hideTopBar = isPropertyDetail || isServiceDetail || isBookingDetail;
 
   return (
     <SidebarCtx.Provider value={{ collapsed, toggle: () => setCollapsed(v => !v) }}>
@@ -240,13 +411,28 @@ export default function DashboardLayout() {
         
         {/* Main Content Area */}
         <View style={{ flex: 1, flexDirection: 'column' }}>
-          {/* TopBar unequivocally touching the top */}
-          <TopBar onMenuPress={() => setCollapsed(v => !v)} title={title} />
+          {!hideTopBar && (
+            <TopBar 
+              onMenuPress={() => setCollapsed(v => !v)} 
+              title={title}
+              notifications={notifications}
+              onBellPress={() => setShowNotifPanel(true)}
+            />
+          )}
           
           <View style={{ flex: 1, overflow: 'hidden' }}>
             <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
           </View>
         </View>
+
+        {/* Notification Panel */}
+        {showNotifPanel && (
+          <NotificationPanel
+            notifications={notifications}
+            onClose={() => setShowNotifPanel(false)}
+            onMarkRead={handleMarkRead}
+          />
+        )}
 
       </View>
     </SidebarCtx.Provider>

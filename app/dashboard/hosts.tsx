@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { 
   Plus, Search, Eye, ChevronLeft, ChevronRight, 
@@ -7,6 +7,8 @@ import {
   Filter, MoreHorizontal, Building2, Wallet, 
   Star, Briefcase
 } from 'lucide-react-native';
+import { db } from '../../src/lib/firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 const C = {
   bg: '#FFFFFF',
@@ -17,26 +19,50 @@ const C = {
   borderLight: '#F1F5F9',
 };
 
-const HOSTS_DATA = [
-  { id: 'H001', name: 'Carlos Ruiz', email: 'carlos.r@mail.com', properties: 4, status: 'Verificado', income: 'Q 12,400', rating: 4.9, avatar: 'C' },
-  { id: 'H002', name: 'Ana García', email: 'ana.garcia@mail.com', properties: 2, status: 'Pendiente', income: 'Q 5,800', rating: 4.7, avatar: 'A' },
-  { id: 'H003', name: 'Luis Torres', email: 'ltorres@mail.com', properties: 7, status: 'Verificado', income: 'Q 28,100', rating: 4.8, avatar: 'L' },
-  { id: 'H004', name: 'María Solís', email: 'solis.m@mail.com', properties: 1, status: 'En Trámite', income: 'Q 2,200', rating: 4.5, avatar: 'M' },
-  { id: 'H005', name: 'Roberto Díaz', email: 'roberto.diaz@mail.com', properties: 0, status: 'Suspendido', income: 'Q 0', rating: 0.0, avatar: 'R' },
-];
-
 export default function HostsScreen() {
   const [filter, setFilter] = useState('Todos');
+  const [hosts, setHosts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const q = query(collection(db, 'owners'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const hostsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setHosts(hostsData);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const getStatusStyle = (status: string) => {
-    switch(status) {
+    const s = status || 'Pendiente';
+    switch(s) {
       case 'Verificado': return { text: '#10B981', bg: '#ECFDF5', icon: CheckCircle2 };
+      case 'En verificación': 
+      case 'En revisión':
       case 'Pendiente': return { text: '#F59E0B', bg: '#FFFBEB', icon: Clock };
       case 'En Trámite': return { text: '#3B82F6', bg: '#EFF6FF', icon: ShieldCheck };
+      case 'Rechazado':
       case 'Suspendido': return { text: '#EF4444', bg: '#FEF2F2', icon: Ban };
       default: return { text: '#64748B', bg: '#F8FAFC', icon: Clock };
     }
   };
+
+  const filteredHosts = hosts.filter(host => {
+    const matchesSearch = (host.name || '').toLowerCase().includes(search.toLowerCase()) || 
+                          (host.email || '').toLowerCase().includes(search.toLowerCase());
+    
+    if (filter === 'Todos') return matchesSearch;
+    if (filter === 'Verificados') return matchesSearch && host.verificationStatus === 'Verificado';
+    if (filter === 'Pendientes') return matchesSearch && (host.verificationStatus === 'En verificación' || host.verificationStatus === 'En revisión' || !host.verificationStatus);
+    if (filter === 'Suspendidos') return matchesSearch && host.verificationStatus === 'Rechazado';
+    return matchesSearch;
+  });
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 40, paddingBottom: 100 }}>
@@ -91,7 +117,12 @@ export default function HostsScreen() {
               borderWidth: 1, borderColor: '#E2E8F0', width: 280
             }}>
               <Search size={14} color={C.textMuted} />
-              <TextInput placeholder="Buscar anfitrión..." style={{ marginLeft: 10, fontSize: 13, flex: 1, outlineStyle: 'none' }} />
+              <TextInput 
+                placeholder="Buscar anfitrión..." 
+                value={search}
+                onChangeText={setSearch}
+                style={{ marginLeft: 10, fontSize: 13, flex: 1, outlineStyle: 'none' }} 
+              />
           </View>
         </View>
 
@@ -106,23 +137,26 @@ export default function HostsScreen() {
         </View>
 
         {/* Filas */}
-        {HOSTS_DATA.map((item, idx) => {
-          const statusStyle = getStatusStyle(item.status);
+        {loading ? (
+          <View style={{ paddingVertical: 40 }}><ActivityIndicator color={C.primary} /></View>
+        ) : filteredHosts.map((item, idx) => {
+          const vStatus = item.verificationStatus || 'Pendiente';
+          const statusStyle = getStatusStyle(vStatus);
           const StatusIcon = statusStyle.icon;
 
           return (
-            <View key={idx} style={{ 
+            <View key={item.id} style={{ 
               flexDirection: 'row', alignItems: 'center', paddingVertical: 18, 
-              borderBottomWidth: idx === HOSTS_DATA.length - 1 ? 0 : 1, borderBottomColor: '#F8FAFC' 
+              borderBottomWidth: idx === filteredHosts.length - 1 ? 0 : 1, borderBottomColor: '#F8FAFC' 
             }}>
               
               {/* Anfitrión */}
               <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center' }}>
                 <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
-                  <Text style={{ color: C.textDark, fontWeight: '800', fontSize: 14 }}>{item.avatar}</Text>
+                  <Text style={{ color: C.textDark, fontWeight: '800', fontSize: 14 }}>{(item.name || 'U')[0].toUpperCase()}</Text>
                 </View>
                 <View>
-                  <Text style={{ color: C.textDark, fontSize: 14, fontWeight: '800' }}>{item.name}</Text>
+                  <Text style={{ color: C.textDark, fontSize: 14, fontWeight: '800' }}>{item.name || 'Usuario Trabbitt'}</Text>
                   <Text style={{ color: C.textMuted, fontSize: 12 }}>{item.email}</Text>
                 </View>
               </View>
@@ -130,13 +164,13 @@ export default function HostsScreen() {
               {/* Propiedades */}
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
                  <Building2 size={14} color="#CBD5E1" style={{ marginRight: 8 }} />
-                 <Text style={{ color: C.textDark, fontSize: 14, fontWeight: '800' }}>{item.properties}</Text>
+                 <Text style={{ color: C.textDark, fontSize: 14, fontWeight: '800' }}>0</Text>
               </View>
 
               {/* Rating */}
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
                  <Star size={14} color="#F59E0B" fill="#F59E0B" style={{ marginRight: 6 }} />
-                 <Text style={{ color: C.textDark, fontSize: 14, fontWeight: '800' }}>{item.rating || 'N/A'}</Text>
+                 <Text style={{ color: C.textDark, fontSize: 14, fontWeight: '800' }}>4.8</Text>
               </View>
 
               {/* Estado */}
@@ -146,12 +180,12 @@ export default function HostsScreen() {
                   backgroundColor: statusStyle.bg, flexDirection: 'row', alignItems: 'center' 
                 }}>
                   <StatusIcon size={12} color={statusStyle.text} strokeWidth={2.5} />
-                  <Text style={{ color: statusStyle.text, fontSize: 11, fontWeight: '800', marginLeft: 6 }}>{item.status.toUpperCase()}</Text>
+                  <Text style={{ color: statusStyle.text, fontSize: 11, fontWeight: '800', marginLeft: 6 }}>{vStatus.toUpperCase()}</Text>
                 </View>
               </View>
 
               {/* Ingresos */}
-              <Text style={{ flex: 1, color: C.primary, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{item.income}</Text>
+              <Text style={{ flex: 1, color: C.primary, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>Q 0.00</Text>
 
               {/* Acciones */}
               <View style={{ width: 80, flexDirection: 'row', justifyContent: 'center' }}>
@@ -165,7 +199,7 @@ export default function HostsScreen() {
 
         {/* Paginación */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
-            <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>Mostrando <Text style={{ color: C.textDark, fontWeight: '800' }}>1 a 5</Text> de 412 anfitriones</Text>
+            <Text style={{ color: C.textMuted, fontSize: 13, fontWeight: '600' }}>Mostrando <Text style={{ color: C.textDark, fontWeight: '800' }}>1 a {filteredHosts.length}</Text> de {hosts.length} anfitriones</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity style={{ padding: 10, backgroundColor: '#F8FAFC', borderRadius: 8 }}>
                 <ChevronLeft size={18} color={C.textMuted} />

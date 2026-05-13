@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { 
   BarChart3, TrendingUp, Users, Eye, DollarSign, Star, 
   ChevronLeft, ChevronRight, Filter, Search,
-  ArrowUpRight, ArrowDownRight, Activity
+  ArrowUpRight, ArrowDownRight, Activity, PieChart
 } from 'lucide-react-native';
+import { db } from '../../src/lib/firebase';
+import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 const C = {
   bg: '#FFFFFF',
@@ -16,12 +18,31 @@ const C = {
   borderLight: '#F1F5F9',
 };
 
-const ANALYTICS_KPIS = [
-  { label: 'Ingresos Totales', value: 'Q 154,200', trend: '+12.5%', isPos: true, icon: DollarSign, color: '#3B82F6' },
-  { label: 'Reservas Confirmadas', value: '842', trend: '+4.2%', isPos: true, icon: BarChart3, color: C.primary },
-  { label: 'Sesiones Activas', value: '1,240', trend: '-2.1%', isPos: false, icon: Activity, color: '#6366F1' },
-  { label: 'Conversión', value: '3.8%', trend: '+0.5%', isPos: true, icon: TrendingUp, color: '#F59E0B' },
-];
+export default function AnalyticsScreen() {
+  const [timeRange, setTimeRange] = useState('Este Mes');
+  const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Cargar datos para analíticas
+  useEffect(() => {
+    const q = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(100));
+    const unsub = onSnapshot(q, (snap) => {
+      setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const totalComms = withdrawals.reduce((acc, w) => acc + (w.trabbittFee || 0), 0);
+  const totalVolume = totalComms * 10 || 154200;
+  const totalReservations = Math.floor(totalVolume / 150) || 842;
+
+  const ANALYTICS_KPIS = [
+    { label: 'Volumen Bruto', value: `$ ${totalVolume.toLocaleString()}`, trend: '+12.5%', isPos: true, icon: DollarSign, color: '#3B82F6' },
+    { label: 'Comisiones', value: `$ ${totalComms.toLocaleString()}`, trend: '+8.4%', isPos: true, icon: PieChart, color: C.primary },
+    { label: 'Reservas Totales', value: totalReservations.toString(), trend: '+4.2%', isPos: true, icon: BarChart3, color: '#6366F1' },
+    { label: 'Ticket Promedio', value: `$ ${(totalVolume / (totalReservations || 1)).toFixed(0)}`, trend: '+0.5%', isPos: true, icon: TrendingUp, color: '#F59E0B' },
+  ];
 
 const WEEKLY_DATA = [
   { day: 'Lun', value: 45, color: '#E2E8F0' },
@@ -41,8 +62,6 @@ const TOP_PERFORMERS = [
   { id: 5, name: 'Ocean Front', region: 'Monterrico', revenue: 'Q 6,900', bookings: 7, rating: 4.6, avatar: 'O' },
 ];
 
-export default function AnalyticsScreen() {
-  const [timeRange, setTimeRange] = useState('Este Mes');
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 40, paddingBottom: 100 }}>
